@@ -17,7 +17,7 @@ Extensión y repositorio minimalista de **AnimeAV1** para **Cloudstream 3**, opt
 
 ## 📥 Instalación en Cloudstream 3
 
-En **Cloudstream** → **Ajustes** → **Extensiones** → **Añadir repositorio**, pega la URL de **`repo.json`** (no `plugins.json`):
+En **Cloudstream** → **Ajustes** → **Extensiones** → **Añadir repositorio**, pega la URL de **`repo.json`**:
 
 ```text
 https://raw.githubusercontent.com/Jeishoon-bit/AnimeAV1-Lite-CS/main/repo.json
@@ -28,15 +28,6 @@ También puedes abrirlo con el enlace directo:
 ```text
 cloudstreamrepo://raw.githubusercontent.com/Jeishoon-bit/AnimeAV1-Lite-CS/main/repo.json
 ```
-
-### ⚡ Usar el código corto `av1lite`
-
-Cloudstream resuelve códigos cortos sin `https://` consultando `https://cutt.ly/<codigo>`. Para activar **`av1lite`**:
-
-1. Entra en [cutt.ly](https://cutt.ly/) y acorta la URL:
-   `https://raw.githubusercontent.com/Jeishoon-bit/AnimeAV1-Lite-CS/main/repo.json`
-2. Personaliza el alias (custom alias) con el nombre **`av1lite`** (quedará `https://cutt.ly/av1lite`).
-3. Después, en Cloudstream → **Añadir repositorio**, bastará con escribir **`av1lite`**.
 
 ## 🚀 Optimizaciones incluidas
 
