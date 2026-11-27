@@ -17,7 +17,7 @@ class AnimeAV1Provider : MainAPI() {
         TvType.OVA
     )
 
-    // Timeouts ajustados para evitar bloqueos largos en TV Boxes lentos
+    // Timeouts optimizados para dispositivos rápidos y Android TV antiguos
     override val getMainPageTimeoutMs = 12_000L
     override val searchTimeoutMs = 12_000L
     override val quickSearchTimeoutMs = 8_000L
@@ -34,7 +34,7 @@ class AnimeAV1Provider : MainAPI() {
             "Accept-Language" to "es-ES,es;q=0.9"
         )
 
-        // Regex precompilados en memoria única (evita crear objetos repetidos en Android TV)
+        // Regex precompilados en memoria única
         private val EPISODE_URL_NUM_REGEX = Regex("""/(\d+)/?$""")
         private val TEXT_NUM_REGEX = Regex("""(\d+)""")
         private val TITLE_PREFIX_REGEX = Regex("""^(?:Portada|Póster)\s+de\s+""", RegexOption.IGNORE_CASE)
@@ -63,13 +63,13 @@ class AnimeAV1Provider : MainAPI() {
         val url = "${request.data}$page"
         val doc = app.get(url, headers = HEADERS, timeout = 12L).document
 
-        val defaultType = when {
+        val categoryType = when {
             request.data.contains("pelicula") -> TvType.AnimeMovie
             request.data.contains("ova") -> TvType.OVA
             else -> TvType.Anime
         }
 
-        val items = parseCatalogCards(doc.select("article, .anime-card, .grid > div"), defaultType)
+        val items = parseCatalogCards(doc.select("article, .anime-card, .grid > div"), request.data, categoryType)
 
         return newHomePageResponse(
             list = HomePageList(
@@ -83,6 +83,7 @@ class AnimeAV1Provider : MainAPI() {
 
     private fun parseCatalogCards(
         elements: Iterable<Element>,
+        requestData: String,
         defaultType: TvType = TvType.Anime,
         limit: Int = Int.MAX_VALUE
     ): List<SearchResponse> {
@@ -91,7 +92,7 @@ class AnimeAV1Provider : MainAPI() {
 
         for (element in elements) {
             if (results.size >= limit) break
-            val item = element.toSearchResult(defaultType) ?: continue
+            val item = element.toSearchResult(requestData, defaultType) ?: continue
             if (seenUrls.add(item.url)) {
                 results.add(item)
             }
@@ -99,12 +100,11 @@ class AnimeAV1Provider : MainAPI() {
         return results
     }
 
-    private fun Element.toSearchResult(defaultType: TvType = TvType.Anime): SearchResponse? {
+    private fun Element.toSearchResult(requestData: String, defaultType: TvType = TvType.Anime): SearchResponse? {
         val linkEl = selectFirst("a[href*=/media/], a[href*=/anime/], a") ?: return null
         val href = fixUrlNull(linkEl.attr("href")) ?: return null
         if (href == mainUrl || href == "$mainUrl/") return null
 
-        // Priorizar h3/h2/.title antes que img[alt] para evitar el prefijo "Portada de ..."
         val headingTitle = selectFirst("h3, h2, .title")?.text()?.trim()
         val imgEl = selectFirst("img")
         val rawTitle = if (!headingTitle.isNullOrBlank()) {
@@ -122,9 +122,11 @@ class AnimeAV1Provider : MainAPI() {
         }
 
         val badgeText = selectFirst(".text-subs, .type")?.text()?.trim()?.lowercase().orEmpty()
+        
+        // Estricta clasificación por categoría solicitada
         val tvType = when {
-            badgeText.contains("película") || badgeText.contains("pelicula") -> TvType.AnimeMovie
-            badgeText.contains("ova") -> TvType.OVA
+            requestData.contains("pelicula") || badgeText.contains("película") || badgeText.contains("pelicula") -> TvType.AnimeMovie
+            requestData.contains("ova") || badgeText.contains("ova") -> TvType.OVA
             else -> defaultType
         }
 
@@ -140,7 +142,9 @@ class AnimeAV1Provider : MainAPI() {
         val doc = app.get(searchUrl, headers = HEADERS, timeout = 8L).document
         return parseCatalogCards(
             doc.select("article, .anime-card, .grid > div"),
-            limit = MAX_QUICK_SEARCH_RESULTS
+            "",
+            TvType.Anime,
+            MAX_QUICK_SEARCH_RESULTS
         )
     }
 
@@ -149,7 +153,7 @@ class AnimeAV1Provider : MainAPI() {
         if (clean.isEmpty()) return emptyList()
         val searchUrl = "$mainUrl/catalogo?search=${clean.replace(" ", "+")}"
         val doc = app.get(searchUrl, headers = HEADERS, timeout = 12L).document
-        return parseCatalogCards(doc.select("article, .anime-card, .grid > div"))
+        return parseCatalogCards(doc.select("article, .anime-card, .grid > div"), "")
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -167,7 +171,6 @@ class AnimeAV1Provider : MainAPI() {
             .mapNotNull { it.text().trim().takeIf(String::isNotBlank) }
             .distinct()
 
-        // Leer solo cabecera/info en vez de doc.text() completo para ahorrar RAM en TV antiguos
         val infoText = doc.selectFirst("main header, .anime-info, .details, main")?.text().orEmpty()
         val showStatus = when {
             infoText.contains("En emisión", ignoreCase = true) -> ShowStatus.Ongoing
@@ -176,7 +179,7 @@ class AnimeAV1Provider : MainAPI() {
         }
 
         val tvType = when {
-            infoText.contains("Película", ignoreCase = true) -> TvType.AnimeMovie
+            infoText.contains("Película", ignoreCase = true) || infoText.contains("pelicula", ignoreCase = true) -> TvType.AnimeMovie
             infoText.contains("OVA", ignoreCase = true) -> TvType.OVA
             else -> TvType.Anime
         }
@@ -238,13 +241,11 @@ class AnimeAV1Provider : MainAPI() {
             }
         }
 
-        // 1. Iframes directos
         for (iframe in doc.select("iframe[src]")) {
             val src = fixUrlNull(iframe.attr("src")) ?: continue
             streamCandidates.add(src)
         }
 
-        // 2. Atributos data-url / data-embed / data-video / data-src
         for (el in doc.select("[data-url], [data-embed], [data-video], [data-src]")) {
             val raw = el.attr("data-url")
                 .ifBlank { el.attr("data-embed") }
@@ -253,7 +254,6 @@ class AnimeAV1Provider : MainAPI() {
             collectCandidate(raw)
         }
 
-        // 3. Scripts con URLs de servidores (incluye payload de SvelteKit / JSON)
         for (script in doc.select("script")) {
             val content = script.data()
             if (content.length < 24) continue
