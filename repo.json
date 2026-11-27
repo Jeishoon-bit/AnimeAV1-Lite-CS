@@ -1,8 +1,0 @@
-{
-  "name": "AnimeAV1 Lite Repo",
-  "description": "Repositorio minimalista y optimizado de AnimeAV1 para Android TV y dispositivos de bajos recursos.",
-  "manifestVersion": 1,
-  "pluginLists": [
-    "https://raw.githubusercontent.com/Jeishoon-bit/AnimeAV1-Lite-CS/builds/plugins.json"
-  ]
-}
