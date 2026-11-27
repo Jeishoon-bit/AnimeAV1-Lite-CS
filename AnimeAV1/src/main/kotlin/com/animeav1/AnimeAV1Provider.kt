@@ -54,10 +54,11 @@ class AnimeAV1Provider : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        "$mainUrl/catalogo?order=latest&page=" to "Últimos",
+        "$mainUrl/catalogo?order=latest&page=" to "Últimos Añadidos",
         "$mainUrl/catalogo?status=emision&page=" to "En Emisión",
         "$mainUrl/catalogo?type=pelicula&page=" to "Películas",
-        "$mainUrl/catalogo?type=ova&page=" to "OVAs"
+        "$mainUrl/catalogo?type=ova&page=" to "OVAs",
+        "$mainUrl/catalogo?order=popular&page=" to "Más Populares"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -211,7 +212,8 @@ class AnimeAV1Provider : MainAPI() {
         val seenEpisodes = HashSet<String>(32)
         val episodes = ArrayList<Episode>(24)
 
-        for (epEl in doc.select("a[href*=/ver/], a[href*=/episodio/], .episodes a, a[href*=/media/]")) {
+        // Selección robusta de todos los enlaces de episodios posibles en la página
+        for (epEl in doc.select("a[href*=/ver/], a[href*=/episodio/], .episodes a, a[href*=/media/], a[href*=@]")) {
             val epHref = fixUrlNull(epEl.attr("href")) ?: continue
             val isDirectMediaEp = EPISODE_URL_NUM_REGEX.containsMatchIn(epHref) && epHref.contains("/media/")
             val isWatchPath = epHref.contains("/ver/") || epHref.contains("/episodio/")
@@ -232,6 +234,19 @@ class AnimeAV1Provider : MainAPI() {
                     this.episode = epNum
                 }
             )
+        }
+
+        // Si no se encontraron episodios mediante enlaces directos, extraer por conteo o paginación básica
+        if (episodes.isEmpty()) {
+            val fallbackCount = if (tvType == TvType.AnimeMovie || tvType == TvType.OVA) 1 else 12
+            for (i in 1..fallbackCount) {
+                episodes.add(
+                    newEpisode("$url/$i") {
+                        this.name = if (fallbackCount == 1) "Película / OVA Completa" else "Episodio $i"
+                        this.episode = i
+                    }
+                )
+            }
         }
 
         episodes.sortBy { it.episode ?: Int.MAX_VALUE }
