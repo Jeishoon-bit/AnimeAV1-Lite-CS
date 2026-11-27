@@ -54,31 +54,23 @@ class AnimeAV1Provider : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        "$mainUrl/catalogo?order=latest&page=" to "Últimos Añadidos",
+        "$mainUrl/catalogo?order=latest&page=" to "Últimos",
         "$mainUrl/catalogo?status=emision&page=" to "En Emisión",
-        "$mainUrl/catalogo?page=" to "Películas",
-        "$mainUrl/catalogo?page=" to "OVAs"
+        "$mainUrl/catalogo?type=pelicula&page=" to "Películas",
+        "$mainUrl/catalogo?type=ova&page=" to "OVAs"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = "${request.data}$page"
         val doc = app.get(url, headers = HEADERS, timeout = 12L).document
 
-        val isPelícula = request.name.contains("Películas", true) || request.name.contains("Peliculas", true)
-        val isOVA = request.name.contains("OVAs", true) || request.name.contains("OVA", true)
-        val isEmisión = request.name.contains("Emisión", true) || request.name.contains("Emision", true)
-
-        val targetType = when {
-            isPelícula -> TvType.AnimeMovie
-            isOVA -> TvType.OVA
-            else -> null
+        val defaultType = when {
+            request.data.contains("pelicula") -> TvType.AnimeMovie
+            request.data.contains("ova") -> TvType.OVA
+            else -> TvType.Anime
         }
 
-        val items = parseCatalogCards(
-            doc.select("article, .anime-card, .grid > div"),
-            targetType,
-            isEmisión
-        )
+        val items = parseCatalogCards(doc.select("article, .anime-card, .grid > div"), defaultType)
 
         return newHomePageResponse(
             list = HomePageList(
@@ -92,8 +84,7 @@ class AnimeAV1Provider : MainAPI() {
 
     private fun parseCatalogCards(
         elements: Iterable<Element>,
-        targetType: TvType? = null,
-        requireOngoing: Boolean = false,
+        defaultType: TvType = TvType.Anime,
         limit: Int = Int.MAX_VALUE
     ): List<SearchResponse> {
         val seenUrls = HashSet<String>(32)
@@ -101,20 +92,7 @@ class AnimeAV1Provider : MainAPI() {
 
         for (element in elements) {
             if (results.size >= limit) break
-            val item = element.toSearchResult() ?: continue
-
-            val badgeText = element.select(".text-subs, .type, .status, span").text().lowercase()
-
-            if (targetType == TvType.AnimeMovie) {
-                if (item.type != TvType.AnimeMovie && !badgeText.contains("película") && !badgeText.contains("pelicula") && !badgeText.contains("movie")) continue
-            } else if (targetType == TvType.OVA) {
-                if (item.type != TvType.OVA && !badgeText.contains("ova")) continue
-            }
-
-            if (requireOngoing) {
-                if (badgeText.contains("finalizado") || badgeText.contains("película") || badgeText.contains("pelicula") || badgeText.contains("ova")) continue
-            }
-
+            val item = element.toSearchResult(defaultType) ?: continue
             if (seenUrls.add(item.url)) {
                 results.add(item)
             }
@@ -122,7 +100,7 @@ class AnimeAV1Provider : MainAPI() {
         return results
     }
 
-    private fun Element.toSearchResult(): SearchResponse? {
+    private fun Element.toSearchResult(defaultType: TvType = TvType.Anime): SearchResponse? {
         val linkEl = selectFirst("a[href*=/media/], a[href*=/anime/], a") ?: return null
         val href = fixUrlNull(linkEl.attr("href")) ?: return null
         if (href == mainUrl || href == "$mainUrl/") return null
@@ -147,7 +125,7 @@ class AnimeAV1Provider : MainAPI() {
         val tvType = when {
             badgeText.contains("película") || badgeText.contains("pelicula") || badgeText.contains("movie") -> TvType.AnimeMovie
             badgeText.contains("ova") -> TvType.OVA
-            else -> TvType.Anime
+            else -> defaultType
         }
 
         return newAnimeSearchResponse(title, href, tvType) {
@@ -162,8 +140,7 @@ class AnimeAV1Provider : MainAPI() {
         val doc = app.get(searchUrl, headers = HEADERS, timeout = 8L).document
         return parseCatalogCards(
             doc.select("article, .anime-card, .grid > div"),
-            null,
-            false,
+            TvType.Anime,
             MAX_QUICK_SEARCH_RESULTS
         )
     }
