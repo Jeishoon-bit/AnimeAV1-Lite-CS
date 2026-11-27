@@ -2,6 +2,7 @@ package com.animeav1
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 
 class AnimeAV1Provider : MainAPI() {
@@ -63,13 +64,15 @@ class AnimeAV1Provider : MainAPI() {
         val url = "${request.data}$page"
         val doc = app.get(url, headers = HEADERS, timeout = 12L).document
 
-        val categoryType = when {
+        val targetType = when {
             request.data.contains("pelicula") -> TvType.AnimeMovie
             request.data.contains("ova") -> TvType.OVA
-            else -> TvType.Anime
+            else -> null
         }
 
-        val items = parseCatalogCards(doc.select("article, .anime-card, .grid > div"), request.data, categoryType)
+        val requireOngoing = request.data.contains("status=emision")
+
+        val items = parseCatalogCards(doc.select("article, .anime-card, .grid > div"), targetType, requireOngoing)
 
         return newHomePageResponse(
             list = HomePageList(
@@ -83,8 +86,8 @@ class AnimeAV1Provider : MainAPI() {
 
     private fun parseCatalogCards(
         elements: Iterable<Element>,
-        requestData: String,
-        defaultType: TvType = TvType.Anime,
+        targetType: TvType? = null,
+        requireOngoing: Boolean = false,
         limit: Int = Int.MAX_VALUE
     ): List<SearchResponse> {
         val seenUrls = HashSet<String>(32)
@@ -92,7 +95,15 @@ class AnimeAV1Provider : MainAPI() {
 
         for (element in elements) {
             if (results.size >= limit) break
-            val item = element.toSearchResult(requestData, defaultType) ?: continue
+            val item = element.toSearchResult() ?: continue
+
+            // Filtrado estricto por categoría para evitar duplicados o mezcla entre tabs
+            if (targetType != null && item.type != targetType) continue
+            if (requireOngoing) {
+                val badgeText = element.select(".text-subs, .type, .status").text().lowercase()
+                if (badgeText.contains("finalizado") || badgeText.contains("película") || badgeText.contains("ova")) continue
+            }
+
             if (seenUrls.add(item.url)) {
                 results.add(item)
             }
@@ -100,7 +111,7 @@ class AnimeAV1Provider : MainAPI() {
         return results
     }
 
-    private fun Element.toSearchResult(requestData: String, defaultType: TvType = TvType.Anime): SearchResponse? {
+    private fun Element.toSearchResult(): SearchResponse? {
         val linkEl = selectFirst("a[href*=/media/], a[href*=/anime/], a") ?: return null
         val href = fixUrlNull(linkEl.attr("href")) ?: return null
         if (href == mainUrl || href == "$mainUrl/") return null
@@ -122,12 +133,10 @@ class AnimeAV1Provider : MainAPI() {
         }
 
         val badgeText = selectFirst(".text-subs, .type")?.text()?.trim()?.lowercase().orEmpty()
-        
-        // Estricta clasificación por categoría solicitada
         val tvType = when {
-            requestData.contains("pelicula") || badgeText.contains("película") || badgeText.contains("pelicula") -> TvType.AnimeMovie
-            requestData.contains("ova") || badgeText.contains("ova") -> TvType.OVA
-            else -> defaultType
+            badgeText.contains("película") || badgeText.contains("pelicula") -> TvType.AnimeMovie
+            badgeText.contains("ova") -> TvType.OVA
+            else -> TvType.Anime
         }
 
         return newAnimeSearchResponse(title, href, tvType) {
@@ -142,8 +151,8 @@ class AnimeAV1Provider : MainAPI() {
         val doc = app.get(searchUrl, headers = HEADERS, timeout = 8L).document
         return parseCatalogCards(
             doc.select("article, .anime-card, .grid > div"),
-            "",
-            TvType.Anime,
+            null,
+            false,
             MAX_QUICK_SEARCH_RESULTS
         )
     }
@@ -153,7 +162,34 @@ class AnimeAV1Provider : MainAPI() {
         if (clean.isEmpty()) return emptyList()
         val searchUrl = "$mainUrl/catalogo?search=${clean.replace(" ", "+")}"
         val doc = app.get(searchUrl, headers = HEADERS, timeout = 12L).document
-        return parseCatalogCards(doc.select("article, .anime-card, .grid > div"), "")
+        return parseCatalogCards(doc.select("article, .anime-card, .grid > div"))
+    }
+
+    // Integración ligera con AniList GraphQL para portadas HD, banners y sinopsis enriquecidas
+    data class AniListCover(val extraLarge: String?, val large: String?)
+    data class AniListMedia(val coverImage: AniListCover?, val bannerImage: String?, val description: String?, val averageScore: Int?)
+    data class AniListData(val media: AniListMedia?)
+    data class AniListResponse(val data: AniListData?)
+    data class AniListMeta(val posterUrl: String?, val bannerUrl: String?, val description: String?, val score: Int?)
+
+    private suspend fun fetchAniListMetadata(title: String): AniListMeta? {
+        try {
+            val cleanTitle = title.replace(Regex("""\s*\(?temporada.*?\)?""", RegexOption.IGNORE_CASE), "").trim()
+            val query = "query (\$search: String) { Media(search: \$search, type: ANIME) { coverImage { extraLarge large } bannerImage description averageScore } }"
+            val variables = mapOf("search" to cleanTitle)
+            val payload = mapOf("query" to query, "variables" to variables)
+
+            val res = app.post("https://graphql.anilist.co", json = payload, timeout = 5L).parsedSafe<AniListResponse>()
+            val media = res?.data?.media ?: return null
+            return AniListMeta(
+                posterUrl = media.coverImage?.extraLarge ?: media.coverImage?.large,
+                bannerUrl = media.bannerImage,
+                description = media.description,
+                score = media.averageScore
+            )
+        } catch (e: Exception) {
+            return null
+        }
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -212,9 +248,16 @@ class AnimeAV1Provider : MainAPI() {
 
         episodes.sortBy { it.episode ?: Int.MAX_VALUE }
 
+        // Consultar AniList en paralelo para enriquecer portadas HD, banners y sinopsis
+        val aniListMeta = fetchAniListMetadata(title)
+        val finalPoster = aniListMeta?.posterUrl ?: fixUrlNull(poster)
+        val finalBanner = aniListMeta?.bannerUrl
+        val finalPlot = aniListMeta?.description?.let { Jsoup.parse(it).text() } ?: description
+
         return newAnimeLoadResponse(title, url, tvType) {
-            this.posterUrl = fixUrlNull(poster)
-            this.plot = description
+            this.posterUrl = finalPoster
+            this.backgroundPosterUrl = finalBanner
+            this.plot = finalPlot
             this.tags = tags
             this.showStatus = showStatus
             addEpisodes(DubStatus.Subbed, episodes)
