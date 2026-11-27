@@ -1,0 +1,42 @@
+name: Build Cloudstream Plugins
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle & Build Cloudstream plugins
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.3.1
+          arguments: make makePluginsJson
+
+      - name: Package builds branch artifacts
+        run: |
+          mkdir -p dist_plugins
+          cp build/plugins.json dist_plugins/
+          cp */build/*.cs3 dist_plugins/
+
+      - name: Upload to builds branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: builds
+          publish_dir: dist_plugins
+          keep_files: false
