@@ -21,11 +21,13 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - name: Setup Gradle & Build Cloudstream plugins
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.3.1
-          arguments: make makePluginsJson
+
+      - name: Build Cloudstream plugins
+        run: gradle make makePluginsJson
 
       - name: Package builds branch artifacts
         run: |
