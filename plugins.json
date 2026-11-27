@@ -9,7 +9,7 @@
             "AnimeAV1Lite"
         ],
         "description": "AnimeAV1 optimizado: bajo consumo de RAM, carga r\u00e1pida y compatible con Android TV antiguos.",
-        "fileSize": 17607,
+        "fileSize": 17609,
         "repositoryUrl": "https://github.com/Jeishoon-bit/AnimeAV1-Lite-CS",
         "language": "es",
         "tvTypes": [
@@ -19,6 +19,6 @@
         ],
         "iconUrl": "https://animeav1.com/favicon.ico",
         "apiVersion": 1,
-        "fileHash": "sha256-486ab74aeabe8c02987dcccd530a047aa2014d96fe08a2dc41132377572e9f10"
+        "fileHash": "sha256-7de8116d744ea1a5c05e5ca96ce27158b4ce5ef74dfeeeb30b893739f4ccf7df"
     }
 ]
