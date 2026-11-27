@@ -9,7 +9,7 @@
             "AnimeAV1Lite"
         ],
         "description": "AnimeAV1 Lite: Extensi\u00f3n optimizada de anime, pel\u00edculas y OVAs en espa\u00f1ol con bajo consumo de RAM, 6 extractores paralelos y navegaci\u00f3n fluida para Android TV.",
-        "fileSize": 22652,
+        "fileSize": 22654,
         "repositoryUrl": "https://github.com/Jeishoon-bit/AnimeAV1-Lite-CS",
         "language": "es",
         "tvTypes": [
@@ -19,6 +19,6 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/Jeishoon-bit/AnimeAV1-Lite-CS/main/crow.jpg",
         "apiVersion": 1,
-        "fileHash": "sha256-c7ae95b1266bce83b03bff062d0b5d91df216ec45f7cc7e8a1aebe81107bd4c7"
+        "fileHash": "sha256-7b91de6a5587448fb6604cab7ebc9b26a0d7514c08291a6b52c8ee70558c7c27"
     }
 ]
