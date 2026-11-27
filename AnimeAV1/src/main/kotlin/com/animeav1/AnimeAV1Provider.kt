@@ -56,23 +56,29 @@ class AnimeAV1Provider : MainAPI() {
     override val mainPage = mainPageOf(
         "$mainUrl/catalogo?order=latest&page=" to "Últimos Añadidos",
         "$mainUrl/catalogo?status=emision&page=" to "En Emisión",
-        "$mainUrl/catalogo?type=pelicula&page=" to "Películas",
-        "$mainUrl/catalogo?type=ova&page=" to "OVAs"
+        "$mainUrl/catalogo?page=" to "Películas",
+        "$mainUrl/catalogo?page=" to "OVAs"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = "${request.data}$page"
         val doc = app.get(url, headers = HEADERS, timeout = 12L).document
 
+        val isPelícula = request.name.contains("Películas", true) || request.name.contains("Peliculas", true)
+        val isOVA = request.name.contains("OVAs", true) || request.name.contains("OVA", true)
+        val isEmisión = request.name.contains("Emisión", true) || request.name.contains("Emision", true)
+
         val targetType = when {
-            request.data.contains("pelicula") -> TvType.AnimeMovie
-            request.data.contains("ova") -> TvType.OVA
+            isPelícula -> TvType.AnimeMovie
+            isOVA -> TvType.OVA
             else -> null
         }
 
-        val requireOngoing = request.data.contains("status=emision")
-
-        val items = parseCatalogCards(doc.select("article, .anime-card, .grid > div"), targetType, requireOngoing)
+        val items = parseCatalogCards(
+            doc.select("article, .anime-card, .grid > div"),
+            targetType,
+            isEmisión
+        )
 
         return newHomePageResponse(
             list = HomePageList(
@@ -80,7 +86,7 @@ class AnimeAV1Provider : MainAPI() {
                 list = items,
                 isHorizontalImages = false
             ),
-            hasNext = items.size >= 12
+            hasNext = items.isNotEmpty()
         )
     }
 
@@ -97,11 +103,16 @@ class AnimeAV1Provider : MainAPI() {
             if (results.size >= limit) break
             val item = element.toSearchResult() ?: continue
 
-            // Filtrado estricto por categoría para evitar duplicados o mezcla entre tabs
-            if (targetType != null && item.type != targetType) continue
+            val badgeText = element.select(".text-subs, .type, .status, span").text().lowercase()
+
+            if (targetType == TvType.AnimeMovie) {
+                if (item.type != TvType.AnimeMovie && !badgeText.contains("película") && !badgeText.contains("pelicula") && !badgeText.contains("movie")) continue
+            } else if (targetType == TvType.OVA) {
+                if (item.type != TvType.OVA && !badgeText.contains("ova")) continue
+            }
+
             if (requireOngoing) {
-                val badgeText = element.select(".text-subs, .type, .status").text().lowercase()
-                if (badgeText.contains("finalizado") || badgeText.contains("película") || badgeText.contains("ova")) continue
+                if (badgeText.contains("finalizado") || badgeText.contains("película") || badgeText.contains("pelicula") || badgeText.contains("ova")) continue
             }
 
             if (seenUrls.add(item.url)) {
@@ -134,7 +145,7 @@ class AnimeAV1Provider : MainAPI() {
 
         val badgeText = selectFirst(".text-subs, .type")?.text()?.trim()?.lowercase().orEmpty()
         val tvType = when {
-            badgeText.contains("película") || badgeText.contains("pelicula") -> TvType.AnimeMovie
+            badgeText.contains("película") || badgeText.contains("pelicula") || badgeText.contains("movie") -> TvType.AnimeMovie
             badgeText.contains("ova") -> TvType.OVA
             else -> TvType.Anime
         }
