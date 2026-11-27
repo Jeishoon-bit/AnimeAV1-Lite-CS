@@ -1,5 +1,7 @@
 import com.lagradost.cloudstream3.gradle.CloudstreamExtension
 import com.android.build.gradle.BaseExtension
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 buildscript {
     repositories {
@@ -52,16 +54,25 @@ subprojects {
             sourceCompatibility = JavaVersion.VERSION_17
             targetCompatibility = JavaVersion.VERSION_17
         }
+    }
 
-        tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
-            kotlinOptions {
-                jvmTarget = "17"
-            }
+    tasks.withType<KotlinCompile>().configureEach {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
         }
     }
 
     dependencies {
-        val implementation by configurations
-        implementation("com.lagradost:cloudstream3:pre-release")
+        val implementation = configurations.getByName("implementation")
+        val cloudstream = configurations.getByName("cloudstream")
+
+        // El plugin com.lagradost.cloudstream3.gradle descarga el APK pre-release automáticamente
+        cloudstream("com.lagradost:cloudstream3:pre-release")
+
+        // Dependencias estándar que suelen usar las extensiones
+        implementation(kotlin("stdlib"))
+        implementation("com.github.Blatzar:NiceHttp:0.4.11")
+        implementation("org.jsoup:jsoup:1.18.3")
+        implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.16.0")
     }
 }
