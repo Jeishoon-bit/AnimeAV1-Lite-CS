@@ -1,10 +1,16 @@
 package com.animeav1
 
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.LoadResponse.Companion.addAniListId
+import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
 import com.lagradost.cloudstream3.utils.*
+import com.fasterxml.jackson.annotation.JsonProperty
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 class AnimeAV1Provider : MainAPI() {
     override var mainUrl = "https://animeav1.com"
@@ -43,6 +49,8 @@ class AnimeAV1Provider : MainAPI() {
         private val SCRIPT_EPISODE_NUMBER_REGEX = Regex("""number\s*:\s*"?(\d+(?:\.\d+)?)"?""")
         private val SCRIPT_STATUS_REGEX = Regex("""status\s*:\s*(\d+)""")
         private val SCRIPT_CATEGORY_SLUG_REGEX = Regex("""category\s*:\s*\{[^}]*slug\s*:\s*"([^"]+)"""")
+        private val SCRIPT_NEXT_DATE_REGEX = Regex("""nextDate\s*:\s*"(\d{4}-\d{2}-\d{2})"""")
+        private val SEASON_TITLE_REGEX = Regex("""\s*\(?temporada.*?\)?""", RegexOption.IGNORE_CASE)
         private val TITLE_PREFIX_REGEX = Regex("""^(?:Portada|Póster)\s+de\s+""", RegexOption.IGNORE_CASE)
         private val SCRIPT_URL_REGEX = Regex("""https?:\\/\\/[^"'\s\\<>]+|https?://[^"'\s<>]+""")
 
@@ -162,31 +170,73 @@ class AnimeAV1Provider : MainAPI() {
         return parseCatalogCards(doc.select("div.grid article, article.group\\/item"))
     }
 
-    // Integración ligera con AniList GraphQL para portadas HD, banners y sinopsis enriquecidas
+    // Integración ligera con AniList GraphQL para portadas HD, banners, sinopsis y próximo episodio en emisión
     data class AniListCover(val extraLarge: String?, val large: String?)
-    data class AniListMedia(val coverImage: AniListCover?, val bannerImage: String?, val description: String?, val averageScore: Int?)
-    data class AniListData(val media: AniListMedia?)
+    data class AniListNextAiring(val airingAt: Long?, val timeUntilAiring: Long?, val episode: Int?)
+    data class AniListMedia(
+        val id: Int?,
+        val coverImage: AniListCover?,
+        val bannerImage: String?,
+        val description: String?,
+        val averageScore: Int?,
+        val nextAiringEpisode: AniListNextAiring?
+    )
+    data class AniListData(@JsonProperty("Media") val media: AniListMedia?)
     data class AniListResponse(val data: AniListData?)
-    data class AniListMeta(val posterUrl: String?, val bannerUrl: String?, val description: String?, val score: Int?)
+    data class AniListMeta(
+        val id: Int?,
+        val posterUrl: String?,
+        val bannerUrl: String?,
+        val description: String?,
+        val score: Int?,
+        val nextAiring: NextAiring?
+    )
 
-    private suspend fun fetchAniListMetadata(title: String): AniListMeta? {
-        try {
-            val cleanTitle = title.replace(Regex("""\s*\(?temporada.*?\)?""", RegexOption.IGNORE_CASE), "").trim()
-            val query = "query (\$search: String) { Media(search: \$search, type: ANIME) { coverImage { extraLarge large } bannerImage description averageScore } }"
-            val variables = mapOf("search" to cleanTitle)
+    private suspend fun queryAniList(query: String, variables: Map<String, Any>): AniListMeta? {
+        return try {
             val payload = mapOf("query" to query, "variables" to variables)
-
             val res = app.post("https://graphql.anilist.co", json = payload, timeout = 5L).parsedSafe<AniListResponse>()
             val media = res?.data?.media ?: return null
-            return AniListMeta(
+
+            val nowSec = System.currentTimeMillis() / 1000L
+            val nextAiringObj = media.nextAiringEpisode?.let { next ->
+                val ep = next.episode
+                val unixSec = next.airingAt
+                    ?: next.timeUntilAiring?.takeIf { it > 0L }?.let { nowSec + it }
+                if (ep != null && unixSec != null && unixSec > nowSec) {
+                    NextAiring(episode = ep, unixTime = unixSec)
+                } else {
+                    null
+                }
+            }
+
+            AniListMeta(
+                id = media.id,
                 posterUrl = media.coverImage?.extraLarge ?: media.coverImage?.large,
                 bannerUrl = media.bannerImage,
                 description = media.description,
-                score = media.averageScore
+                score = media.averageScore,
+                nextAiring = nextAiringObj
             )
         } catch (e: Exception) {
-            return null
+            null
         }
+    }
+
+    private suspend fun fetchAniListMetadata(title: String, malId: Int? = null): AniListMeta? {
+        if (malId != null) {
+            queryAniList(
+                query = "query (\$idMal: Int) { Media(idMal: \$idMal, type: ANIME) { id coverImage { extraLarge large } bannerImage description averageScore nextAiringEpisode { airingAt timeUntilAiring episode } } }",
+                variables = mapOf("idMal" to malId)
+            )?.let { return it }
+        }
+
+        val cleanTitle = title.replace(SEASON_TITLE_REGEX, "").trim()
+        if (cleanTitle.isEmpty()) return null
+        return queryAniList(
+            query = "query (\$search: String) { Media(search: \$search, type: ANIME) { id coverImage { extraLarge large } bannerImage description averageScore nextAiringEpisode { airingAt timeUntilAiring episode } } }",
+            variables = mapOf("search" to cleanTitle)
+        )
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -301,11 +351,49 @@ class AnimeAV1Provider : MainAPI() {
         sortableEpisodes.sortBy { it.first }
         val episodes = sortableEpisodes.map { it.second }
 
-        // Consultar AniList en paralelo para enriquecer portadas HD, banners y sinopsis
-        val aniListMeta = fetchAniListMetadata(title)
+        val slug = cleanBaseUrl.substringAfterLast('/')
+        val malId = if (slug.isNotBlank() && svelteData.isNotEmpty()) {
+            Regex("""slug\s*:\s*"${Regex.escape(slug)}"\s*,\s*malId\s*:\s*(\d+)""")
+                .find(svelteData)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        } else {
+            null
+        }
+
+        // Consultar AniList para portadas HD, banners, sinopsis y próximo estreno en emisión
+        val aniListMeta = fetchAniListMetadata(title, malId)
+        val nowSeconds = System.currentTimeMillis() / 1000L
+
+        val fallbackNextAiring = if (aniListMeta?.nextAiring == null && showStatus == ShowStatus.Ongoing) {
+            val nextDateStr = SCRIPT_NEXT_DATE_REGEX.find(svelteData)?.groupValues?.getOrNull(1)
+            val parsedUnix = nextDateStr?.let { parseUtcDateToUnixSeconds(it) }
+            if (parsedUnix != null && parsedUnix > nowSeconds) {
+                val nextEpNumber = (episodes.maxOfOrNull { it.episode ?: 0 } ?: 0) + 1
+                NextAiring(episode = nextEpNumber, unixTime = parsedUnix)
+            } else {
+                null
+            }
+        } else {
+            null
+        }
+
+        val resolvedNextAiring = if (showStatus != ShowStatus.Completed) {
+            (aniListMeta?.nextAiring ?: fallbackNextAiring)?.takeIf { it.unixTime > nowSeconds }
+        } else {
+            null
+        }
+
+        val countdownBanner = resolvedNextAiring?.let {
+            formatAiringCountdown(it.episode, it.unixTime, nowSeconds)
+        }
+
         val finalPoster = aniListMeta?.posterUrl ?: fixUrlNull(poster)
         val finalBanner = aniListMeta?.bannerUrl
-        val finalPlot = aniListMeta?.description?.let { Jsoup.parse(it).text() } ?: description
+        val basePlot = aniListMeta?.description?.let { Jsoup.parse(it).text() } ?: description
+        val finalPlot = when {
+            countdownBanner != null && !basePlot.isNullOrBlank() -> "$countdownBanner\n\n$basePlot"
+            countdownBanner != null -> countdownBanner
+            else -> basePlot
+        }
 
         return newAnimeLoadResponse(title, url, tvType) {
             this.posterUrl = finalPoster
@@ -313,6 +401,9 @@ class AnimeAV1Provider : MainAPI() {
             this.plot = finalPlot
             this.tags = tags
             this.showStatus = showStatus
+            this.nextAiring = resolvedNextAiring
+            addMalId(malId)
+            addAniListId(aniListMeta?.id)
             addEpisodes(DubStatus.Subbed, episodes)
         }
     }
@@ -406,6 +497,35 @@ class AnimeAV1Provider : MainAPI() {
             }
         }
         return null
+    }
+
+    private fun parseUtcDateToUnixSeconds(dateStr: String): Long? {
+        return try {
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
+            val parsed = sdf.parse(dateStr) ?: return null
+            (parsed.time / 1000L) + 43_200L // mediodía UTC aproximado si no hay hora exacta
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun formatAiringCountdown(episode: Int, airingAtSeconds: Long, nowSeconds: Long): String? {
+        val remaining = airingAtSeconds - nowSeconds
+        if (remaining <= 0L) return null
+
+        val days = remaining / 86_400L
+        val hours = (remaining % 86_400L) / 3_600L
+        val minutes = (remaining % 3_600L) / 60L
+
+        val timeText = when {
+            days > 0L -> "${days}d ${hours}h ${minutes}m"
+            hours > 0L -> "${hours}h ${minutes}m"
+            minutes > 0L -> "${minutes}m"
+            else -> "menos de 1m"
+        }
+        return "⏳ Próximo capítulo (Ep. $episode): en $timeText"
     }
 
     private fun isLikelyVideoHost(lowerUrl: String): Boolean {
