@@ -13,30 +13,30 @@
 
 ---
 
-Extensión y repositorio minimalista de **AnimeAV1** para **Cloudstream 3**, optimizado para bajo consumo de RAM, carga rápida, integración con AniList y compatibilidad con Android TV antiguos (`minSdk = 21`).
+Minimalist **AnimeAV1** extension and repository for **Cloudstream 3**, optimized for low RAM usage, fast loading, AniList integration, and compatibility with older Android TV devices (`minSdk = 21`).
 
-## 📥 Instalación en Cloudstream 3
+## 📥 Installation in Cloudstream 3
 
-En **Cloudstream** → **Ajustes** → **Extensiones** → **Añadir repositorio**, pega la URL de **`repo.json`**:
+In **Cloudstream** → **Settings** → **Extensions** → **Add repository**, paste the **`repo.json`** URL:
 
 ```text
 https://raw.githubusercontent.com/Jeishoon-bit/AnimeAV1-Lite-CS/main/repo.json
 ```
 
-También puedes abrirlo con el enlace directo:
+You can also open it directly with the deep link:
 
 ```text
 cloudstreamrepo://raw.githubusercontent.com/Jeishoon-bit/AnimeAV1-Lite-CS/main/repo.json
 ```
 
-## 🚀 Optimizaciones incluidas
+## 🚀 Included Optimizations
 
-- **Lectura selectiva del DOM**: Evita concatenar todo el documento con `doc.text()` en fichas largas, leyendo solo las secciones de metadatos e información.
-- **AniList GraphQL Integración**: Portadas en alta resolución, banners panorámicos (`backgroundPosterUrl`) y calificaciones integradas automáticamente.
-- **Categorías estrictas**: Separación limpia entre *Últimos*, *En Emisión*, *Películas* y *OVAs*.
-- **Extractores paralelos seguros**: Extracción de vídeo con `amap` limitada a 6 hilos simultáneos para proteger dispositivos de bajos recursos y Android TV antiguos.
+- **Selective DOM Reading**: Avoids concatenating the entire document with `doc.text()` on long detail pages, reading only the metadata and info sections.
+- **AniList GraphQL Integration**: High-resolution covers, panoramic banners (`backgroundPosterUrl`), enriched synopses, and a next-episode airing countdown for ongoing anime.
+- **Strict Categories**: Clean separation across *Latest Added*, *Ongoing*, *Movies*, *OVAs*, *Specials*, and *Most Popular*, plus full episode loading without the 50-episode cap on long-running series.
+- **Safe Parallel Extractors**: Video extraction using `amap` capped at 6 concurrent threads to protect low-spec devices and older Android TVs.
 
-## 🛠️ Compilación local del plugin `.cs3`
+## 🛠️ Local `.cs3` Plugin Build
 
 ```bash
 gradle make makePluginsJson
