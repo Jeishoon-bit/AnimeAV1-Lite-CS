@@ -36,17 +36,12 @@ class AnimeAV1Provider : MainAPI() {
         )
 
         // Regex precompilados en memoria única
-        private val EPISODE_URL_NUM_REGEX = Regex("""/(\d+)/?$""")
-        private val TEXT_NUM_REGEX = Regex("""(\d+)""")
+        private val EPISODE_URL_NUM_REGEX = Regex("""/(\d+(?:\.\d+)?)/?$""")
+        private val TEXT_NUM_REGEX = Regex("""(\d+(?:\.\d+)?)""")
+        private val SCRIPT_EPISODES_START_REGEX = Regex("""episodes\s*:\s*\[""")
+        private val SCRIPT_EPISODE_NUMBER_REGEX = Regex("""number\s*:\s*"?(\d+(?:\.\d+)?)"?""")
         private val TITLE_PREFIX_REGEX = Regex("""^(?:Portada|Póster)\s+de\s+""", RegexOption.IGNORE_CASE)
         private val SCRIPT_URL_REGEX = Regex("""https?:\\/\\/[^"'\s\\<>]+|https?://[^"'\s<>]+""")
-
-        // ===== PARCH ADITIVO: episodios completos en series largas (ej. One Piece) =====
-        // La página de animeav1 renderiza solo el primer rango (p. ej. "1 - 50"), pero el
-        // estado embebido (SvelteKit) trae TODOS los episodios como {id:N,number:M}.
-        private val EMBEDDED_EPISODE_REGEX = Regex("""\{id:(\d+),number:(\d+)}""")
-        private val EPISODES_COUNT_REGEX = Regex("""episodesCount:(\d+)""")
-        // ===== FIN PARCH ADITIVO =====
 
         private val STREAM_HOSTS_PRIORITY = listOf(
             "zilla-networks", "streamwish", "filemoon", "vidhide", "voe",
@@ -216,39 +211,64 @@ class AnimeAV1Provider : MainAPI() {
             else -> TvType.Anime
         }
 
-        val seenEpisodes = HashSet<String>(32)
-        val episodes = ArrayList<Episode>(24)
+        val cleanBaseUrl = url.substringBefore('?').substringBefore('#').trimEnd('/')
+        val seenEpisodes = HashSet<String>(64)
+        val sortableEpisodes = ArrayList<Pair<Double, Episode>>(64)
 
-        // Selección robusta de todos los enlaces de episodios posibles en la página
+        // 1. Extraer lista completa de episodios desde el payload embebido en <script> (evita el límite de 50 en DOM)
+        for (script in doc.select("script")) {
+            val scriptData = script.data()
+            if (!scriptData.contains("episodes")) continue
+            val epSlice = extractScriptEpisodesSlice(scriptData) ?: continue
+            for (match in SCRIPT_EPISODE_NUMBER_REGEX.findAll(epSlice)) {
+                val rawNum = match.groupValues[1]
+                val sortNum = rawNum.toDoubleOrNull() ?: continue
+                val epHref = "$cleanBaseUrl/$rawNum"
+                if (!seenEpisodes.add(epHref)) continue
+
+                sortableEpisodes.add(
+                    sortNum to newEpisode(epHref) {
+                        this.name = "Episodio $rawNum"
+                        this.episode = sortNum.toInt()
+                    }
+                )
+            }
+            if (sortableEpisodes.isNotEmpty()) break
+        }
+
+        // 2. Complementar con enlaces directos del DOM sin duplicar
         for (epEl in doc.select("a[href*=/ver/], a[href*=/episodio/], .episodes a, a[href*=/media/], a[href*=@]")) {
-            val epHref = fixUrlNull(epEl.attr("href")) ?: continue
+            val rawHref = fixUrlNull(epEl.attr("href")) ?: continue
+            val epHref = rawHref.substringBefore('?').substringBefore('#').trimEnd('/')
             val isDirectMediaEp = EPISODE_URL_NUM_REGEX.containsMatchIn(epHref) && epHref.contains("/media/")
             val isWatchPath = epHref.contains("/ver/") || epHref.contains("/episodio/")
             if (!isDirectMediaEp && !isWatchPath) continue
             if (!seenEpisodes.add(epHref)) continue
 
             val epText = epEl.text().trim()
-            val epNum = EPISODE_URL_NUM_REGEX.find(epHref)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                ?: TEXT_NUM_REGEX.find(epText)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            val rawNum = EPISODE_URL_NUM_REGEX.find(epHref)?.groupValues?.getOrNull(1)
+                ?: TEXT_NUM_REGEX.find(epText)?.groupValues?.getOrNull(1)
+            val sortNum = rawNum?.toDoubleOrNull() ?: Double.MAX_VALUE
+            val epInt = rawNum?.toDoubleOrNull()?.toInt()
 
-            episodes.add(
-                newEpisode(epHref) {
+            sortableEpisodes.add(
+                sortNum to newEpisode(epHref) {
                     this.name = if (epText.isNotBlank() && epText.toIntOrNull() == null) {
                         epText
                     } else {
-                        "Episodio ${epNum ?: (episodes.size + 1)}"
+                        "Episodio ${rawNum ?: (sortableEpisodes.size + 1)}"
                     }
-                    this.episode = epNum
+                    this.episode = epInt
                 }
             )
         }
 
-        // Si no se encontraron episodios mediante enlaces directos, extraer por conteo o paginación básica
-        if (episodes.isEmpty()) {
+        // 3. Fallback si no se encontraron episodios ni en script ni en DOM
+        if (sortableEpisodes.isEmpty()) {
             val fallbackCount = if (tvType == TvType.AnimeMovie || tvType == TvType.OVA) 1 else 12
             for (i in 1..fallbackCount) {
-                episodes.add(
-                    newEpisode("$url/$i") {
+                sortableEpisodes.add(
+                    i.toDouble() to newEpisode("$cleanBaseUrl/$i") {
                         this.name = if (fallbackCount == 1) "Película / OVA Completa" else "Episodio $i"
                         this.episode = i
                     }
@@ -256,9 +276,8 @@ class AnimeAV1Provider : MainAPI() {
             }
         }
 
-        completeEpisodes(doc, url, episodes) // PARCH ADITIVO: rellena episodios fuera del rango renderizado
-
-        episodes.sortBy { it.episode ?: Int.MAX_VALUE }
+        sortableEpisodes.sortBy { it.first }
+        val episodes = sortableEpisodes.map { it.second }
 
         // Consultar AniList en paralelo para enriquecer portadas HD, banners y sinopsis
         val aniListMeta = fetchAniListMetadata(title)
@@ -275,48 +294,6 @@ class AnimeAV1Provider : MainAPI() {
             addEpisodes(DubStatus.Subbed, episodes)
         }
     }
-
-    // ===== PARCH ADITIVO: completa la lista de episodios sin tocar el código existente =====
-    // 1) Usa la lista completa embebida en la página ({id:N,number:M}).
-    // 2) Respaldo: genera $url/$num hasta episodesCount (patrón de URL confirmado en el sitio).
-    // Nunca duplica: respeta los episodios ya encontrados por el scraping original.
-    private fun completeEpisodes(doc: org.jsoup.nodes.Document, url: String, episodes: MutableList<Episode>) {
-        val scriptText = doc.select("script").joinToString("\n") { it.data() }
-
-        val seenUrls = episodes.mapTo(HashSet(episodes.size)) { it.data }
-        val seenNums = episodes.mapNotNullTo(HashSet(episodes.size)) { it.episode }
-
-        fun addEpisode(num: Int) {
-            if (num in seenNums) return
-            val epUrl = "$url/$num"
-            if (!seenUrls.add(epUrl)) return
-            seenNums.add(num)
-            episodes.add(
-                newEpisode(epUrl) {
-                    this.name = "Episodio $num"
-                    this.episode = num
-                }
-            )
-        }
-
-        // 1) Lista completa embebida en el HTML (fuente de verdad: números reales del sitio)
-        val embedded = EMBEDDED_EPISODE_REGEX.findAll(scriptText)
-            .mapNotNull { it.groupValues[2].toIntOrNull() }
-            .distinct()
-            .sorted()
-
-        if (embedded.size > episodes.size) {
-            embedded.forEach(::addEpisode)
-            return
-        }
-
-        // 2) Respaldo por conteo total
-        val count = EPISODES_COUNT_REGEX.find(scriptText)?.groupValues?.get(1)?.toIntOrNull() ?: return
-        val maxFound = seenNums.maxOrNull() ?: 0
-        if (count <= maxFound) return
-        for (num in (maxFound + 1)..count) addEpisode(num)
-    }
-    // ===== FIN PARCH ADITIVO =====
 
     override suspend fun loadLinks(
         data: String,
@@ -368,6 +345,45 @@ class AnimeAV1Provider : MainAPI() {
         }
 
         return true
+    }
+
+    private fun extractScriptEpisodesSlice(scriptData: String): String? {
+        val startMatch = SCRIPT_EPISODES_START_REGEX.find(scriptData) ?: return null
+        val openBracketIndex = startMatch.range.last
+        var depth = 0
+        var inString = false
+        var stringChar = '\u0000'
+        var escaped = false
+
+        for (i in openBracketIndex until scriptData.length) {
+            val ch = scriptData[i]
+            if (escaped) {
+                escaped = false
+                continue
+            }
+            if (inString) {
+                if (ch == '\\') {
+                    escaped = true
+                } else if (ch == stringChar) {
+                    inString = false
+                }
+                continue
+            }
+            when (ch) {
+                '"', '\'' -> {
+                    inString = true
+                    stringChar = ch
+                }
+                '[' -> depth++
+                ']' -> {
+                    depth--
+                    if (depth == 0) {
+                        return scriptData.substring(openBracketIndex, i + 1)
+                    }
+                }
+            }
+        }
+        return null
     }
 
     private fun isLikelyVideoHost(lowerUrl: String): Boolean {

@@ -13,30 +13,30 @@
 
 ---
 
-A minimalist **AnimeAV1** extension and repository for **Cloudstream 3**, optimized for low RAM usage, fast loading, AniList integration, and compatibility with older Android TVs (`minSdk = 21`).
+Extensión y repositorio minimalista de **AnimeAV1** para **Cloudstream 3**, optimizado para bajo consumo de RAM, carga rápida, integración con AniList y compatibilidad con Android TV antiguos (`minSdk = 21`).
 
-## 📥 Installing on Cloudstream 3
+## 📥 Instalación en Cloudstream 3
 
-In **Cloudstream** → **Settings** → **Extensions** → **Add repository**, paste the **`repo.json`** URL:
+En **Cloudstream** → **Ajustes** → **Extensiones** → **Añadir repositorio**, pega la URL de **`repo.json`**:
 
 ```text
 https://raw.githubusercontent.com/Jeishoon-bit/AnimeAV1-Lite-CS/main/repo.json
 ```
 
-You can also open it using the direct link:
+También puedes abrirlo con el enlace directo:
 
 ```text
 cloudstreamrepo://raw.githubusercontent.com/Jeishoon-bit/AnimeAV1-Lite-CS/main/repo.json
 ```
 
-## 🚀 Included optimizations
+## 🚀 Optimizaciones incluidas
 
-- **Selective DOM reading**: Avoids concatenating the entire document with `doc.text()` on long pages by reading only the metadata and information sections.
-- **AniList GraphQL integration**: High-resolution covers, panoramic banners (`backgroundPosterUrl`), and ratings integrated automatically.
-- **Strict categories**: Clean separation between *Latest*, *Ongoing*, *Movies*, and *OVAs*.
-- **Safe parallel extractors**: Video extraction with `amap` is limited to 6 simultaneous threads to protect low-resource devices and older Android TVs.
+- **Lectura selectiva del DOM**: Evita concatenar todo el documento con `doc.text()` en fichas largas, leyendo solo las secciones de metadatos e información.
+- **AniList GraphQL Integración**: Portadas en alta resolución, banners panorámicos (`backgroundPosterUrl`) y calificaciones integradas automáticamente.
+- **Categorías estrictas**: Separación limpia entre *Últimos*, *En Emisión*, *Películas* y *OVAs*.
+- **Extractores paralelos seguros**: Extracción de vídeo con `amap` limitada a 6 hilos simultáneos para proteger dispositivos de bajos recursos y Android TV antiguos.
 
-## 🛠️ Local compilation of the `.cs3` plugin
+## 🛠️ Compilación local del plugin `.cs3`
 
 ```bash
 gradle make makePluginsJson
