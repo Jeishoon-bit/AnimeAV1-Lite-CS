@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import java.net.URLEncoder
 
 class AnimeAV1Provider : MainAPI() {
     override var mainUrl = "https://animeav1.com"
@@ -40,6 +41,8 @@ class AnimeAV1Provider : MainAPI() {
         private val TEXT_NUM_REGEX = Regex("""(\d+(?:\.\d+)?)""")
         private val SCRIPT_EPISODES_START_REGEX = Regex("""episodes\s*:\s*\[""")
         private val SCRIPT_EPISODE_NUMBER_REGEX = Regex("""number\s*:\s*"?(\d+(?:\.\d+)?)"?""")
+        private val SCRIPT_STATUS_REGEX = Regex("""status\s*:\s*(\d+)""")
+        private val SCRIPT_CATEGORY_SLUG_REGEX = Regex("""category\s*:\s*\{[^}]*slug\s*:\s*"([^"]+)"""")
         private val TITLE_PREFIX_REGEX = Regex("""^(?:Portada|Póster)\s+de\s+""", RegexOption.IGNORE_CASE)
         private val SCRIPT_URL_REGEX = Regex("""https?:\\/\\/[^"'\s\\<>]+|https?://[^"'\s<>]+""")
 
@@ -56,10 +59,11 @@ class AnimeAV1Provider : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        "$mainUrl/catalogo?order=latest&page=" to "Últimos Añadidos",
-        "$mainUrl/catalogo?status=emision&page=" to "En Emisión",
-        "$mainUrl/catalogo?type=pelicula&page=" to "Películas",
-        "$mainUrl/catalogo?type=ova&page=" to "OVAs",
+        "$mainUrl/catalogo?order=latest_added&page=" to "Últimos Añadidos",
+        "$mainUrl/catalogo?status=emision&order=latest_released&page=" to "En Emisión",
+        "$mainUrl/catalogo?category=pelicula&order=latest_added&page=" to "Películas",
+        "$mainUrl/catalogo?category=ova&order=latest_added&page=" to "OVAs",
+        "$mainUrl/catalogo?category=especial&order=latest_added&page=" to "Especiales",
         "$mainUrl/catalogo?order=popular&page=" to "Más Populares"
     )
 
@@ -73,7 +77,7 @@ class AnimeAV1Provider : MainAPI() {
             else -> TvType.Anime
         }
 
-        val items = parseCatalogCards(doc.select("article, .anime-card, .grid > div"), defaultType)
+        val items = parseCatalogCards(doc.select("div.grid article, article.group\\/item"), defaultType)
 
         return newHomePageResponse(
             list = HomePageList(
@@ -139,10 +143,11 @@ class AnimeAV1Provider : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse> {
         val clean = query.trim()
         if (clean.length < 2) return emptyList()
-        val searchUrl = "$mainUrl/catalogo?search=${clean.replace(" ", "+")}"
+        val encoded = URLEncoder.encode(clean, "UTF-8")
+        val searchUrl = "$mainUrl/catalogo?search=$encoded"
         val doc = app.get(searchUrl, headers = HEADERS, timeout = 8L).document
         return parseCatalogCards(
-            doc.select("article, .anime-card, .grid > div"),
+            doc.select("div.grid article, article.group\\/item"),
             TvType.Anime,
             MAX_QUICK_SEARCH_RESULTS
         )
@@ -151,9 +156,10 @@ class AnimeAV1Provider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val clean = query.trim()
         if (clean.isEmpty()) return emptyList()
-        val searchUrl = "$mainUrl/catalogo?search=${clean.replace(" ", "+")}"
+        val encoded = URLEncoder.encode(clean, "UTF-8")
+        val searchUrl = "$mainUrl/catalogo?search=$encoded"
         val doc = app.get(searchUrl, headers = HEADERS, timeout = 12L).document
-        return parseCatalogCards(doc.select("article, .anime-card, .grid > div"))
+        return parseCatalogCards(doc.select("div.grid article, article.group\\/item"))
     }
 
     // Integración ligera con AniList GraphQL para portadas HD, banners y sinopsis enriquecidas
@@ -198,17 +204,33 @@ class AnimeAV1Provider : MainAPI() {
             .mapNotNull { it.text().trim().takeIf(String::isNotBlank) }
             .distinct()
 
+        val svelteData = doc.select("script")
+            .firstOrNull { it.data().contains("episodes:[") }
+            ?.data()
+            .orEmpty()
+
         val infoText = doc.selectFirst("main header, .anime-info, .details, main")?.text().orEmpty()
-        val showStatus = when {
-            infoText.contains("En emisión", ignoreCase = true) -> ShowStatus.Ongoing
-            infoText.contains("Finalizado", ignoreCase = true) -> ShowStatus.Completed
-            else -> null
+        val scriptStatus = SCRIPT_STATUS_REGEX.find(svelteData)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        val showStatus = when (scriptStatus) {
+            2 -> ShowStatus.Ongoing
+            0 -> ShowStatus.Completed
+            else -> when {
+                infoText.contains("En emisión", ignoreCase = true) -> ShowStatus.Ongoing
+                infoText.contains("Finalizado", ignoreCase = true) -> ShowStatus.Completed
+                else -> null
+            }
         }
 
-        val tvType = when {
-            infoText.contains("Película", ignoreCase = true) || infoText.contains("pelicula", ignoreCase = true) -> TvType.AnimeMovie
-            infoText.contains("OVA", ignoreCase = true) -> TvType.OVA
-            else -> TvType.Anime
+        val scriptCategory = SCRIPT_CATEGORY_SLUG_REGEX.find(svelteData)?.groupValues?.getOrNull(1)?.lowercase()
+        val tvType = when (scriptCategory) {
+            "pelicula" -> TvType.AnimeMovie
+            "ova" -> TvType.OVA
+            "tv-anime", "ona", "especial" -> TvType.Anime
+            else -> when {
+                infoText.contains("Película", ignoreCase = true) || infoText.contains("pelicula", ignoreCase = true) -> TvType.AnimeMovie
+                infoText.contains("OVA", ignoreCase = true) -> TvType.OVA
+                else -> TvType.Anime
+            }
         }
 
         val cleanBaseUrl = url.substringBefore('?').substringBefore('#').trimEnd('/')

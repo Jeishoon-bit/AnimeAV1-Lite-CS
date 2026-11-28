@@ -1,4 +1,4 @@
-version = 4
+version = 5
 
 cloudstream {
     description = "AnimeAV1 Lite: Extensión optimizada de anime, películas y OVAs en español con bajo consumo de RAM, 6 extractores paralelos y navegación fluida para Android TV."
